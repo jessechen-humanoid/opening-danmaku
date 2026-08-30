@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>開場彈幕 · 大螢幕彈幕牆</title>
+<style>
+  :root{ --side:24vw; }
+  *{box-sizing:border-box;}
+  /* 彈幕牆是全版面投影頁：鎖死捲動，現場不會被誤捲 */
+  html,body{margin:0; background:#0a0a0a; color:#fff; overflow:hidden; height:100vh;
+    font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;}
+
+  /* 內容區：固定一個視窗高，彈幕舞台與側欄都相對於這一區定位 */
+  /* --yoff 由 ↑↓ 方向鍵微調（投影對位：讓 QR code 落在幕上掃得到的位置），存 localStorage */
+  #screenArea{position:relative; height:100vh; overflow:hidden; background:#0a0a0a;
+    transform:translateY(var(--yoff, 0vh));}
+
+  /* 彈幕舞台：右邊界縮到側欄左緣，overflow 藏起 → 彈幕永遠打不到側欄 */
+  #stage{position:absolute; top:0; left:0; bottom:0; right:var(--side); overflow:hidden;}
+
+  .danmaku{position:absolute; left:100%; white-space:nowrap; font-weight:800;
+    text-shadow:0 2px 10px #000, 0 0 4px #000, 0 0 2px #000; will-change:transform;}
+  .danmaku .pfx{opacity:.55;}   /* {table} {nick}｜ 前綴壓深，內容本文全亮 */
+
+  /* ===== 右側欄（不會被彈幕打到）===== */
+  /* 側欄內容全部靠上堆疊：QR → 標題 → 計數，後排觀眾視線不會被前排人頭擋住 */
+  #sidebar{position:absolute; top:0; right:0; bottom:0; width:var(--side); z-index:10;
+    background:#080808; border-left:2px solid #1c1c1c; overflow:hidden;
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+    gap:3vh; padding:4vh 1.5vw;}
+
+  /* QR Code（上方）*/
+  #qrWrap{display:flex; flex-direction:column; align-items:center; width:100%;}
+  #qrBox{position:relative; width:74%; aspect-ratio:1; border-radius:16px; overflow:hidden; background:#fff;
+    box-shadow:0 0 24px rgba(0,0,0,.6);}
+  #qrBox img{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#fff;}
+  #qrPlaceholder{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:#151515; color:#777; border:2px dashed #333; text-align:center; font-weight:800; font-size:2.6vh; gap:1vh;}
+  #qrPlaceholder span{font-size:1.6vh; color:#555; font-weight:600;}
+
+  /* 標題（QR 正下方）*/
+  #ctaWrap{display:flex; align-items:center; justify-content:center;}
+  #ctaTitle{color:#FFD166; font-weight:900; font-size:min(3.4vh, 2.2vw); line-height:1.55; text-align:center;
+    text-shadow:0 2px 8px #000; white-space:nowrap;}
+
+  /* 留言人數計數（下方）*/
+  #counterWrap{display:flex; flex-direction:column; align-items:center; width:100%;}
+  .counterLine{font-size:2.2vh; color:#e8e8e8; font-weight:700; text-align:center;}
+  #askerCount{display:block; font-size:7vh; color:#FFFDF6; font-weight:900; margin:.4vh 0; text-shadow:0 2px 10px #000;}
+
+  /* Firebase 未設定時的明確提示（不白屏）*/
+  #dbWarn{position:absolute; top:3vh; left:2vw; right:calc(var(--side) + 2vw); z-index:30;
+    display:none; align-items:center; gap:1vh; color:#FFD166; background:rgba(0,0,0,.7);
+    border:2px solid #FFD166; border-radius:10px; padding:1.4vh 2vw; font-size:2.2vh; font-weight:800;}
+
+  #fsBtn,#cogBtn{position:fixed; bottom:12px; z-index:50; background:#111; color:#777;
+    border:1px solid #333; border-radius:8px; padding:8px 12px; font-size:13px; cursor:pointer;}
+  #fsBtn{right:14px;} #cogBtn{right:120px;}
+  #stat{position:fixed; left:12px; bottom:10px; color:#444; font-size:12px; font-family:monospace; z-index:50;}
+
+  #panel{position:fixed; right:14px; bottom:50px; width:344px; max-height:82vh; overflow:auto; z-index:60;
+    background:#111; border:1px solid #333; border-radius:14px; padding:16px 16px 18px; display:none; color:#ddd;}
+  #panel.open{display:block;}
+  #panel h3{margin:2px 0 10px; font-size:15px; color:#fff;}
+  #panel .hint{font-size:11px; color:#777; line-height:1.5; margin:0 0 12px;}
+  #panel label{display:block; font-size:12px; color:#9aa; margin:12px 0 4px;}
+  #panel input{width:100%; font-size:14px; padding:8px 10px; border-radius:8px; border:1px solid #333; background:#000; color:#fff;}
+  #panel .row{display:flex; gap:6px;} #panel .row>div{flex:1;}
+  #panel .scenes{display:flex; gap:6px; margin-top:6px;}
+  #panel .scenes button{flex:1; font-size:13px; font-weight:700; padding:9px 0; border-radius:8px; border:1px solid #333; background:#000; color:#ccc; cursor:pointer;}
+  #panel .acts{display:flex; gap:8px; margin-top:16px;}
+  #panel .acts button{flex:1; font-size:14px; font-weight:800; padding:10px 0; border:none; border-radius:8px; cursor:pointer;}
+  #saveBtn{background:#fff; color:#000;} #resetBtn{background:#000; color:#888; border:1px solid #333 !important;}
+  #clearAllBtn{background:#2a0d0d; color:#ff6b6b; border:1px solid #7a2020 !important;}
+  #panel .keys{font-size:11px; color:#666; margin-top:14px; line-height:1.6;}
+</style>
+</head>
+<body>
+  <div id="screenArea">
+    <div id="stage"></div>
+
+    <div id="sidebar">
+      <div id="qrWrap">
+        <div id="qrBox">
+          <div id="qrPlaceholder">QR Code<span>放上 qrcode.png 就會顯示</span></div>
+          <img id="qrImg" src="qrcode.png" alt="投稿 QR Code" onerror="this.remove()">
+        </div>
+      </div>
+
+      <div id="ctaWrap"><div id="ctaTitle">掃碼寫下<br>你想說的話</div></div>
+
+      <div id="counterWrap">
+        <div class="counterLine">已經有</div>
+        <span id="askerCount">0</span>
+        <div class="counterLine">人留言</div>
+      </div>
+    </div>
+
+    <div id="dbWarn">⚠ 尚未設定 Firebase，請完成 firebase-config.js 後重新整理</div>
+  </div>
+
+  <button id="cogBtn">⚙ 控制台 (C)</button>
+  <button id="fsBtn">⛶ 全螢幕 (F)</button>
+  <div id="stat"></div>
+
+  <div id="panel">
+    <h3>控制台</h3>
+    <p class="hint">速度 / 字級＝<b>每條彈幕隨機抽一組</b>（逗號分隔多組）。<br>軌道數越少＝字越大越不擠；同屏滿了會自動排隊等空軌道，<b>保證不重疊</b>。</p>
+    <label>速度組（px/秒）</label>
+    <input id="f_speed" placeholder="120, 170, 230">
+    <label>字級組（vh）</label>
+    <input id="f_font" placeholder="3.6, 4.8, 6.5">
+    <div class="row">
+      <div><label>軌道數</label><input id="f_lanes" type="number"></div>
+      <div><label>同屏</label><input id="f_max" type="number"></div>
+      <div><label>滴放ms</label><input id="f_drip" type="number"></div>
+      <div><label>補位ms</label><input id="f_fill" type="number"></div>
+    </div>
+    <label>情境快切（按 1 / 2 / 3）</label>
+    <div class="scenes">
+      <button data-scene="calm">平靜</button>
+      <button data-scene="normal">普通</button>
+      <button data-scene="riot">暴動</button>
+    </div>
+    <div class="acts">
+      <button id="saveBtn">儲存設定</button>
+      <button id="resetBtn">重設預設</button>
+    </div>
+    <div class="acts">
+      <button id="clearAllBtn">⚠ 清空大螢幕</button>
+    </div>
+    <div class="keys">F 全螢幕 · C 控制台 · 空白鍵 暫停 · X 清空全幕 · 1/2/3 情境</div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script>
+  /* ===== 設定（localStorage 記住）===== */
+  const DEFAULTS = {
+    speedGroups: [120, 170, 230],
+    fontGroups:  [3.6, 4.8, 6.5],
+    lanes: 12, maxOnScreen: 60, dripMs: 70, laneGap: 1.0,
+    fillMs: 1200,   // 沒新投稿時的補位間隔（重播既有投稿）
+  };
+  const SCENES = {
+    calm:   { maxOnScreen: 25,  dripMs: 160 },
+    normal: { maxOnScreen: 60,  dripMs: 70  },
+    riot:   { maxOnScreen: 130, dripMs: 20  },
+  };
+  const LS = 'opening_danmaku_screen_cfg_v1';
+  function loadCfg(){ try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS)||'{}')); }catch(e){ return {...DEFAULTS}; } }
+  let cfg = loadCfg();
+
+  const pick = a => (a && a.length) ? a[Math.floor(Math.random()*a.length)] : null;
+  const parseNums = s => String(s).split(/[,\s]+/).map(Number).filter(n=>!isNaN(n)&&n>0);
+
+  /* 彈幕文字色：單一系統，每條隨機 80% 象牙白 / 20% 黃 */
+  function pickTextColor(){ return Math.random() < 0.8 ? '#FFFDF6' : '#FFD166'; }
+
+  /* ===== 彈幕引擎（沿用 QQQQAAAA 實戰驗證版，原樣不動）===== */
+  const stage = document.getElementById('stage');
+  const queue = [];
+  let onScreen = 0, paused = false;
+  let laneBusyUntil = new Array(cfg.lanes).fill(0);
+
+  function laneCenter(i){
+    const top = 0.05, bottom = 0.95, h = (bottom - top) / cfg.lanes;
+    return (top + (i + 0.5) * h) * stage.clientHeight;
+  }
+  // 隨機挑一條「現在是空的」軌道；全忙就回 -1，這條先排隊、不硬塞 → 保證不重疊
+  function pickLane(now){
+    const free = [];
+    for(let i = 0; i < cfg.lanes; i++) if(laneBusyUntil[i] <= now) free.push(i);
+    if(free.length) return free[Math.floor(Math.random() * free.length)];
+    return -1;
+  }
+  function esc(s){ return (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  function sentence(it){
+    return `<span class="pfx">${esc(it.table)} ${esc(it.nick)}｜</span><span class="q">${esc(it.question)}</span>`;
+  }
+  // 回傳 true=已放出；false=目前沒有空軌道，這條留在佇列等下一輪（不硬塞、不重疊）
+  function spawn(it){
+    const now = performance.now();
+    const lane = pickLane(now);
+    if(lane < 0) return false;
+
+    const el = document.createElement('div');
+    el.className = 'danmaku';
+    el.style.fontSize = pick(cfg.fontGroups) + 'vh';
+    el.style.color = pickTextColor();
+    el.innerHTML = sentence(it);
+    el.style.visibility = 'hidden';
+    stage.appendChild(el);
+
+    const w = el.offsetWidth, h = el.offsetHeight;
+    // 貼齊軌道中心（不再抖動）；夾在畫面內
+    let y = laneCenter(lane) - h / 2;
+    y = Math.max(2, Math.min(stage.clientHeight - h - 2, y));
+    el.style.top = y + 'px';
+    el.style.visibility = 'visible';
+
+    const speed = pick(cfg.speedGroups) || 170;
+    const stageW = stage.clientWidth;
+    const dist = stageW + w, dur = dist / speed * 1000;
+
+    // 同軌道防追撞：就算下一條抽到最快速度、也不會在前一條離場前追上。
+    const Vmax = Math.max.apply(null, cfg.speedGroups.concat(speed));
+    const gapPx = h * (cfg.laneGap || 1);
+    const busyMs = ((stageW + w + gapPx) / speed - stageW / Vmax) * 1000;
+    laneBusyUntil[lane] = now + Math.max(busyMs, 0);
+
+    onScreen++;
+    const mEl = subMap.get(it.key); if(mEl) mEl.el = el;
+    el.style.transition = `transform ${dur}ms linear`;
+    requestAnimationFrame(() => { el.style.transform = `translateX(${-dist}px)`; });
+    el.addEventListener('transitionend', () => {
+      el.remove(); onScreen--;
+      const m = subMap.get(it.key); if(m) m.el = null;
+    });
+    return true;
+  }
+  (function dripLoop(){
+    if(!paused){
+      let budget = 4;
+      while(budget-- && queue.length && onScreen < cfg.maxOnScreen){
+        if(spawn(queue[0])) queue.shift();
+        else break;   // 沒空軌道 → 這輪停，下輪再試
+      }
+    }
+    setTimeout(dripLoop, cfg.dripMs);
+  })();
+
+  function clearScreen(){
+    stage.querySelectorAll('.danmaku').forEach(el => el.remove());
+    queue.length = 0; onScreen = 0; subMap.forEach(m => m.el = null);
+  }
+
+  /* ===== 資料：投稿彈幕（只收開頁後）＋ 全量計數（含開頁前）=====
+     開場彈幕不做審核：沒有關鍵字過濾、沒有 status 判斷，
+     所有投稿一律視為可上牆。*/
+  const subMap = new Map();   // key -> {el}（記錄目前是否在幕上，供防重疊重播用）
+  const items = new Map();    // key -> submission（彈幕、重播池、計數、清空封存共用同一份資料）
+  const askerSet = new Set();
+  const askerCountEl = document.getElementById('askerCount');
+  function rebuildAskerSet(){
+    askerSet.clear();
+    items.forEach(it => askerSet.add(String(it.table || '') + '' + String(it.nick || '')));
+    askerCountEl.textContent = askerSet.size;
+  }
+
+  // 清空目前彈幕：預設（Firebase 未就緒）只報錯；連上 db 後在下方換成真正的封存清空
+  let clearAllQuestions = () => alert('⚠ Firebase 未設定，無法清空');
+
+  const db = initQQQQDb();
+  if(!db){
+    document.getElementById('dbWarn').style.display = 'flex';
+  } else {
+    const roomRef = db.ref('rooms/' + ROOM);
+    const subsRef = roomRef.child('submissions');
+    const pageOpenAt = Date.now();   // 只用於 clearAt 判斷，不再過濾投稿（時鐘偏差不影響顯示）
+
+    let initialLoaded = false;
+    subsRef.once('value').then(() => { initialLoaded = true; })
+                         .catch(() => { initialLoaded = true; });
+
+    subsRef.on('child_added', snap => {
+      const it = snap.val(); if(!it) return;
+      const key = snap.key;
+      items.set(key, it);
+      subMap.set(key, { el: null });
+      askerSet.add(String(it.table || '') + '' + String(it.nick || ''));
+      askerCountEl.textContent = askerSet.size;
+      // 初始載入完成後才到達的 = 現場新投稿 → 插到佇列最前端，永遠先於補位重播
+      if(initialLoaded){
+        queue.unshift({ key, table: it.table, nick: it.nick, question: it.question });
+      }
+    });
+
+    subsRef.on('child_removed', snap => {
+      items.delete(snap.key); subMap.delete(snap.key);
+      rebuildAskerSet();   // 清空／刪除後留言人數要跟著歸零，不能只增不減
+    });
+
+    // ── 重播補位：佇列空、螢幕未滿時，用全場投稿洗牌循環補位 ──
+    // 整池播完一輪才重洗；同一條還在幕上時跳過不疊播。
+    let cycle = [];
+    function nextRecycled(){
+      for(let round = 0; round < 2; round++){
+        if(cycle.length === 0){
+          cycle = [...items.keys()];
+          for(let i = cycle.length - 1; i > 0; i--){
+            const j = Math.floor(Math.random() * (i + 1));
+            const t = cycle[i]; cycle[i] = cycle[j]; cycle[j] = t;
+          }
+        }
+        while(cycle.length){
+          const key = cycle.pop();
+          const it = items.get(key);
+          const m = subMap.get(key);
+          if(it && !(m && m.el)){
+            return { key, table: it.table, nick: it.nick, question: it.question };
+          }
+        }
+      }
+      return null;   // 池子空或全部在幕上，這輪不補
+    }
+    (function fillLoop(){
+      if(!paused && initialLoaded && queue.length === 0 && onScreen < cfg.maxOnScreen){
+        const it = nextRecycled();
+        if(it) spawn(it);
+      }
+      setTimeout(fillLoop, Math.max(200, Number(cfg.fillMs) || 1200));
+    })();
+
+    db.ref('rooms/' + ROOM + '/control/clearAt').on('value', s => {
+      const t = s.val(); if(t && t > pageOpenAt) clearScreen();
+    });
+
+    // ── 清空大螢幕：單一原子多路徑更新（封存搬移，不是刪除）──
+    // 一次 update 完成「投稿原樣搬進 archive/{clearTs}/ ＋ 清空 submissions ＋ 發 clearAt 清畫面」。
+    // 全部成功或全部失敗：斷網或規則未發布時整筆被拒，alert 報錯、資料與畫面不變。
+    clearAllQuestions = function(){
+      const n = items.size;
+      const ok = confirm('確定清空目前 ' + n + ' 則彈幕？\n內容會封存、留言人數歸零，此動作無法復原。');
+      if(!ok) return;
+      const clearTs = String(Date.now());   // 只作封存批次鍵，不參與任何判斷
+      const updates = {};
+      items.forEach((it, key) => {
+        updates['archive/' + clearTs + '/' + key] = it;
+        updates['submissions/' + key] = null;
+      });
+      updates['control/clearAt'] = firebase.database.ServerValue.TIMESTAMP;
+      roomRef.update(updates).then(() => {
+        panel.classList.remove('open');
+      }).catch(err => {
+        alert('⚠ 清空失敗，所有資料未變動。\n原因：' + (err && err.message ? err.message : err) +
+              '\n（常見原因：網路中斷，或 database.rules.json 尚未在 Firebase 後台發布）');
+      });
+    };
+  }
+
+  /* ===== 控制台 ===== */
+  const $ = id => document.getElementById(id);
+  const panel = $('panel');
+  function fillForm(){
+    $('f_speed').value = cfg.speedGroups.join(', ');
+    $('f_font').value  = cfg.fontGroups.join(', ');
+    $('f_lanes').value = cfg.lanes; $('f_max').value = cfg.maxOnScreen;
+    $('f_drip').value = cfg.dripMs;
+    $('f_fill').value = cfg.fillMs;
+  }
+  function readForm(){
+    cfg.speedGroups = parseNums($('f_speed').value);
+    cfg.fontGroups  = parseNums($('f_font').value);
+    const lanes = parseInt($('f_lanes').value) || cfg.lanes;
+    if(lanes !== cfg.lanes){ cfg.lanes = lanes; laneBusyUntil = new Array(lanes).fill(0); }
+    cfg.maxOnScreen = parseInt($('f_max').value) || cfg.maxOnScreen;
+    cfg.dripMs = parseInt($('f_drip').value) || cfg.dripMs;
+    cfg.fillMs = parseInt($('f_fill').value) || cfg.fillMs;
+    localStorage.setItem(LS, JSON.stringify(cfg));
+  }
+  function setScene(name){
+    const s = SCENES[name]; if(!s) return;
+    cfg.maxOnScreen = s.maxOnScreen; cfg.dripMs = s.dripMs;
+    $('f_max').value = s.maxOnScreen; $('f_drip').value = s.dripMs;
+    localStorage.setItem(LS, JSON.stringify(cfg));
+  }
+  function togglePanel(){ panel.classList.toggle('open'); if(panel.classList.contains('open')) fillForm(); }
+  $('cogBtn').onclick = togglePanel;
+  $('saveBtn').onclick = () => { readForm(); panel.classList.remove('open'); };
+  $('clearAllBtn').onclick = () => clearAllQuestions();
+  $('resetBtn').onclick = () => { cfg = {...DEFAULTS}; laneBusyUntil = new Array(cfg.lanes).fill(0); localStorage.setItem(LS, JSON.stringify(cfg)); fillForm(); };
+  document.querySelectorAll('.scenes button').forEach(b => b.onclick = () => setScene(b.dataset.scene));
+
+  /* ===== 全螢幕 + 快捷鍵 ===== */
+  const fsBtn = $('fsBtn');
+  if(!document.documentElement.requestFullscreen) fsBtn.style.display = 'none';
+  function toggleFs(){ document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+  fsBtn.onclick = toggleFs;
+  /* 投影對位：↑↓ 微調 1vh（按住可連續）、Shift+↑↓ 一次 5vh、0 歸位。取代頁面捲動（會被誤捲）。 */
+  let yOffVh = Number(localStorage.getItem('opening_danmaku_screen_yoff') || 0);
+  function applyYOff(){
+    yOffVh = Math.max(-60, Math.min(60, yOffVh));
+    document.documentElement.style.setProperty('--yoff', yOffVh + 'vh');
+    localStorage.setItem('opening_danmaku_screen_yoff', yOffVh);
+  }
+  applyYOff();
+
+  addEventListener('keydown', e => {
+    if(e.target.matches('input,textarea,select')) return;
+    const isUp = e.key === 'ArrowUp' || e.key === 'Up';       // 'Up'/'Down' 為舊式命名，一併支援
+    const isDown = e.key === 'ArrowDown' || e.key === 'Down';
+    if(isUp || isDown){   // 對位鍵允許按住連發
+      e.preventDefault();
+      yOffVh += (isUp ? -1 : 1) * (e.shiftKey ? 5 : 1);
+      applyYOff();
+      return;
+    }
+    if(e.repeat) return;
+    const k = e.key.toLowerCase();
+    if(k === 'f') toggleFs();
+    else if(k === 'c') togglePanel();
+    else if(k === 'x') clearScreen();
+    else if(e.key === '0'){ yOffVh = 0; applyYOff(); }
+    else if(e.key === ' '){ e.preventDefault(); paused = !paused; }
+    else if(e.key === '1') setScene('calm');
+    else if(e.key === '2') setScene('normal');
+    else if(e.key === '3') setScene('riot');
+  });
+
+  setInterval(() => { $('stat').textContent =
+    `目前彈幕數 ${items.size}` + (paused ? ' · ⏸' : ''); }, 300);
+  </script>
+</body>
+</html>
