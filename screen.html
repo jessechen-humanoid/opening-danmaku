@@ -131,7 +131,7 @@
       <div><label>補位ms</label><input id="f_fill" type="number"></div>
     </div>
     <label>後台彈幕停留秒數（字卡停在中央的時間；台詞在 backstage-lines.js）</label>
-    <input id="f_bs" type="number" placeholder="15">
+    <input id="f_bs" type="number" placeholder="10">
     <label>情境快切（按 1 / 2 / 3）</label>
     <div class="scenes">
       <button data-scene="calm">平靜</button>
@@ -159,7 +159,7 @@
     fontGroups:  [3.6, 4.8, 6.5],
     lanes: 12, maxOnScreen: 60, dripMs: 70, laneGap: 1.0,
     fillMs: 1200,   // 沒新投稿時的補位間隔（重播既有投稿）
-    backstageHoldSec: 15,   // 後台字卡停在中央的秒數
+    backstageHoldSec: 10,   // 後台字卡停在中央的秒數
   };
   const SCENES = {
     calm:   { maxOnScreen: 25,  dripMs: 160 },
@@ -365,7 +365,7 @@
     };
     const startHold = () => {
       phase = 'hold';
-      let remain = (Number(cfg.backstageHoldSec) > 0 ? Number(cfg.backstageHoldSec) : 15) * 1000;
+      let remain = (Number(cfg.backstageHoldSec) > 0 ? Number(cfg.backstageHoldSec) : DEFAULTS.backstageHoldSec) * 1000;
       let last = performance.now();
       (function tick(){
         if(done || phase !== 'hold') return;
