@@ -24,7 +24,7 @@
   .danmaku .pfx{opacity:.55;}   /* {table} {nick}｜ 前綴壓深，內容本文全亮 */
 
   /* 後台彈幕（預寫台詞）：純白、最大字級、黑描邊，固定走中央保留帶，一次只有一則 */
-  .danmaku.backstage{color:#fff; font-weight:900; font-size:10vh; line-height:1.1; z-index:5;   /* line-height 收緊，文字盒完全落在保留帶內 */
+  .danmaku.backstage{color:#fff; font-weight:900; line-height:1.1; z-index:5;   /* 字級由 fitBackstageFont() 依最長句計算，保證單行；line-height 收緊讓文字盒落在保留帶內 */
     text-shadow:0 0 8px #000, 0 0 16px #000, 3px 3px 0 #000, -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000;}
   .danmaku.backstage .pfx{opacity:.85;}   /* 前綴同為白色、略壓一階 */
   /* 終了彈幕：滿版單則 */
@@ -130,8 +130,8 @@
       <div><label>滴放ms</label><input id="f_drip" type="number"></div>
       <div><label>補位ms</label><input id="f_fill" type="number"></div>
     </div>
-    <label>後台彈幕速度（px/秒，越小越慢；台詞在 backstage-lines.js）</label>
-    <input id="f_bs" type="number" placeholder="80">
+    <label>後台彈幕停留秒數（字卡停在中央的時間；台詞在 backstage-lines.js）</label>
+    <input id="f_bs" type="number" placeholder="15">
     <label>情境快切（按 1 / 2 / 3）</label>
     <div class="scenes">
       <button data-scene="calm">平靜</button>
@@ -159,7 +159,7 @@
     fontGroups:  [3.6, 4.8, 6.5],
     lanes: 12, maxOnScreen: 60, dripMs: 70, laneGap: 1.0,
     fillMs: 1200,   // 沒新投稿時的補位間隔（重播既有投稿）
-    backstageSpeed: 80,   // 後台彈幕速度（px/秒）；終了彈幕以其 3 倍速跑一次
+    backstageHoldSec: 15,   // 後台字卡停在中央的秒數
   };
   const SCENES = {
     calm:   { maxOnScreen: 25,  dripMs: 160 },
@@ -167,7 +167,7 @@
     riot:   { maxOnScreen: 130, dripMs: 20  },
   };
   const LS = 'opening_danmaku_screen_cfg_v1';
-  function loadCfg(){ try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS)||'{}')); }catch(e){ return {...DEFAULTS}; } }
+  function loadCfg(){ try{ const c = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS)||'{}')); delete c.backstageSpeed; return c; }catch(e){ return {...DEFAULTS}; } }   // backstageSpeed 為舊版鍵，忽略
   let cfg = loadCfg();
 
   const pick = a => (a && a.length) ? a[Math.floor(Math.random()*a.length)] : null;
@@ -303,18 +303,95 @@
   })();
   bsEnabled = bsPlaylist.length > 0;
   let bsStarted = false, bsIndex = 0, bsActive = null;
+  addEventListener('load', () => { if(typeof fitBackstageFont === 'function') fitBackstageFont(); });
   function backstageCenterY(){
     const r = reservedLanes();
     if(r.length) return (laneCenter(r[0]) + laneCenter(r[1])) / 2;
     return stage.clientHeight / 2;
   }
+  const FINALE_SPEED = 240;   // 終了彈幕固定速度（px/秒），不受控制台影響
+
+  // 字級依最長句自動縮放：min(6vh, 舞台寬×0.92 ÷ 最長句字數)。以字數估寬（CJK 一字 ≈ 1em），
+  // 全中文台詞誤差小；保證 12 句全部單行、不留空位。載入與 resize 時重算。
+  let bsFontPx = 0;
+  function fitBackstageFont(){
+    if(!bsPlaylist.length) return;
+    // 半形字元（英數、空白、標點）約半個字寬，算 0.5；其餘（CJK、全形）算 1
+    const widthOf = str => [...str].reduce((n, ch) => n + (/[\x20-\x7E]/.test(ch) ? 0.5 : 1), 0);
+    const maxChars = Math.max.apply(null, bsPlaylist.map(l => widthOf(l.who + '｜' + l.text)));
+    const cap = stage.clientHeight * 0.06;
+    bsFontPx = Math.max(12, Math.min(cap, stage.clientWidth * 0.92 / maxChars));
+    if(bsActive){
+      bsActive.style.fontSize = bsFontPx + 'px';
+      if(bsActive._bs) bsActive._bs.recalc();   // 字卡顯示中 resize／進全螢幕：重算置中與離場位移
+    }
+  }
+  addEventListener('resize', fitBackstageFont);
+
+  // 三段式字卡：右緣進場 0.6s 急停中央 → 停留 backstageHoldSec 秒 → 0.5s 滑出左緣 → 下一句立刻進場。
+  // paused：停留計時凍結、字卡留在中央；ended：立即進入離場段。
+  const BS_ENTER_MS = 600, BS_EXIT_MS = 500;
+  function spawnBackstageCard(line){
+    fitBackstageFont();   // 每次都重算：隱藏分頁開頁時 stage 尺寸為 0，第一張卡前必須拿到真實尺寸
+    const el = document.createElement('div');
+    el.className = 'danmaku backstage';
+    el.style.fontSize = bsFontPx + 'px';
+    el.innerHTML = `<span class="pfx">${esc(line.who)}｜</span><span class="q">${esc(line.text)}</span>`;
+    el.style.visibility = 'hidden';
+    stage.appendChild(el);
+    const w = el.offsetWidth, h = el.offsetHeight, stageW = stage.clientWidth;
+    let y = backstageCenterY() - h / 2;
+    y = Math.max(0, Math.min(stage.clientHeight - h, y));
+    el.style.top = y + 'px';
+    el.style.visibility = 'visible';
+    let centerX = -(stageW / 2 + w / 2);   // 從 left:100% 起算，置中所需位移
+    let exitX = -(stageW + w);
+    let phase = 'enter', done = false;
+    // resize 重算幾何：hold 中的卡直接跳到新的置中位置（無動畫）；enter/exit 中只更新目標值
+    el._bs = { recalc(){
+      const w2 = el.offsetWidth, h2 = el.offsetHeight, sw = stage.clientWidth;
+      centerX = -(sw / 2 + w2 / 2); exitX = -(sw + w2);
+      let y2 = backstageCenterY() - h2 / 2; y2 = Math.max(0, Math.min(stage.clientHeight - h2, y2));
+      el.style.top = y2 + 'px';
+      if(phase === 'hold'){ el.style.transition = 'none'; el.style.transform = `translateX(${centerX}px)`; }
+    } };
+    const finish = () => { if(done) return; done = true; el.remove(); if(bsActive === el) bsActive = null; bsNext(); };
+    const startExit = () => {
+      if(phase === 'exit') return;
+      phase = 'exit';
+      el.style.transition = `transform ${BS_EXIT_MS}ms cubic-bezier(.6,0,1,1)`;   // ease-in：先慢後快
+      requestAnimationFrame(() => { el.style.transform = `translateX(${exitX}px)`; });
+      setTimeout(finish, BS_EXIT_MS + 1500);   // 保底
+    };
+    const startHold = () => {
+      phase = 'hold';
+      let remain = (Number(cfg.backstageHoldSec) > 0 ? Number(cfg.backstageHoldSec) : 15) * 1000;
+      let last = performance.now();
+      (function tick(){
+        if(done || phase !== 'hold') return;
+        const now = performance.now();
+        if(ended){ startExit(); return; }        // 終了：立即離場
+        if(!paused) remain -= (now - last);      // 暫停：計時凍結、字卡留在中央
+        last = now;
+        if(remain <= 0){ startExit(); return; }
+        setTimeout(tick, 100);
+      })();
+    };
+    el.style.transition = `transform ${BS_ENTER_MS}ms cubic-bezier(.2,.8,.2,1)`;   // ease-out：先快後慢，急停感
+    requestAnimationFrame(() => { el.style.transform = `translateX(${centerX}px)`; });
+    el.addEventListener('transitionend', () => {
+      if(phase === 'enter') startHold();
+      else if(phase === 'exit') finish();
+    });
+    setTimeout(() => { if(phase === 'enter') startHold(); }, BS_ENTER_MS + 1500);   // 保底：transitionend 沒觸發
+    return el;
+  }
+
   function bsNext(){
     if(!bsStarted || frozen() || bsActive || !bsPlaylist.length) return;
     const line = bsPlaylist[bsIndex % bsPlaylist.length];
     bsIndex = (bsIndex + 1) % bsPlaylist.length;
-    const html = `<span class="pfx">${esc(line.who)}｜</span><span class="q">${esc(line.text)}</span>`;
-    bsActive = spawnSpecial(html, 'backstage', Number(cfg.backstageSpeed) || 80, backstageCenterY(),
-                            () => { bsActive = null; bsNext(); });
+    bsActive = spawnBackstageCard(line);
   }
   (function bsLoop(){
     if(bsActive && !bsActive.isConnected) bsActive = null;   // 元素被外力移除時自我修復
@@ -335,7 +412,7 @@
     lastEndToggle = now;
     ended = !ended;   // 只切自己的旗標；空白鍵的 paused 不受影響，兩者以 frozen() 合成
     if(ended){
-      spawnSpecial('終了～～～', 'finale', (Number(cfg.backstageSpeed) || 80) * 3, stage.clientHeight / 2, null);
+      spawnSpecial('終了～～～', 'finale', FINALE_SPEED, stage.clientHeight / 2, null);
     }
     renderEndBtn();
   }
@@ -460,7 +537,7 @@
     $('f_lanes').value = cfg.lanes; $('f_max').value = cfg.maxOnScreen;
     $('f_drip').value = cfg.dripMs;
     $('f_fill').value = cfg.fillMs;
-    $('f_bs').value = cfg.backstageSpeed;
+    $('f_bs').value = cfg.backstageHoldSec;
   }
   function readForm(){
     cfg.speedGroups = parseNums($('f_speed').value);
@@ -471,7 +548,8 @@
     cfg.dripMs = parseInt($('f_drip').value) || cfg.dripMs;
     cfg.fillMs = parseInt($('f_fill').value) || cfg.fillMs;
     const bsv = parseInt($('f_bs').value);
-    cfg.backstageSpeed = (bsv > 0) ? bsv : DEFAULTS.backstageSpeed;   // 非數字、0、負數一律退回預設
+    cfg.backstageHoldSec = (bsv > 0) ? bsv : DEFAULTS.backstageHoldSec;   // 非數字、0、負數一律退回預設
+    delete cfg.backstageSpeed;   // 舊版設定鍵，已無用途
     localStorage.setItem(LS, JSON.stringify(cfg));
   }
   function setScene(name){
