@@ -49,7 +49,7 @@ function initQQQQDb(){
 
 // 資料模型備忘（實際權限限制在 database.rules.json）：
 // rooms/{ROOM}/submissions/{pushId} = {
-//   table: "B3"~"B32", nick: ≤8字, question: ≤50字（自由文字，欄位名沿用 question
+//   table: "B3"~"B32", nick: ≤8字, question: ≤25字（自由文字，欄位名沿用 question
 //   以求 rules 與引擎程式碼零 diff，畫面上不再顯示「問題」字樣）, ts: ServerValue.TIMESTAMP
 // }
 // 沒有 admin、沒有 draw、沒有審核狀態欄位（無 status/drawnAt/tone）：

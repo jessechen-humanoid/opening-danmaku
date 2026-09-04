@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>開場彈幕 · 寫彈幕</title>
+<title>串場彈幕 · 寫彈幕</title>
 <style>
   :root{
     --bg:#0a0a0a;
@@ -141,7 +141,7 @@
 
   <div class="fb-warning" id="fbWarning">尚未設定 Firebase（請填 firebase-config.js）</div>
 
-  <div class="tag">開場彈幕</div>
+  <div class="tag">串場彈幕</div>
   <h1>想寫什麼都可以，飛上大螢幕！</h1>
 
   <div class="notice">請勿使用粗俗不雅文字，內容會直接顯示在大螢幕上</div>
@@ -167,7 +167,7 @@
     <div class="field" id="questionField">
       <div class="field-label-row">
         <label for="questionInput">想說的話</label>
-        <span class="counter" id="questionCounter">0/50</span>
+        <span class="counter" id="questionCounter">0/25</span>
       </div>
       <textarea id="questionInput" placeholder="想寫什麼都可以…"></textarea>
     </div>
@@ -186,7 +186,7 @@
   <script>
     (function(){
       var NICK_LIMIT = 8;
-      var QUESTION_LIMIT = 50;   // 欄位名沿用 question，但畫面上是自由輸入的文字，不是問題
+      var QUESTION_LIMIT = 25;   // 欄位名沿用 question，但畫面上是自由輸入的文字，不是問題
 
       var $ = function(id){ return document.getElementById(id); };
       var tableSelect = $('tableSelect');
