@@ -23,6 +23,14 @@
     text-shadow:0 2px 10px #000, 0 0 4px #000, 0 0 2px #000; will-change:transform;}
   .danmaku .pfx{opacity:.55;}   /* {table} {nick}｜ 前綴壓深，內容本文全亮 */
 
+  /* 後台彈幕（預寫台詞）：純白、最大字級、黑描邊，固定走中央保留帶，一次只有一則 */
+  .danmaku.backstage{color:#fff; font-weight:900; font-size:10vh; line-height:1.1; z-index:5;   /* line-height 收緊，文字盒完全落在保留帶內 */
+    text-shadow:0 0 8px #000, 0 0 16px #000, 3px 3px 0 #000, -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000;}
+  .danmaku.backstage .pfx{opacity:.85;}   /* 前綴同為白色、略壓一階 */
+  /* 終了彈幕：滿版單則 */
+  .danmaku.finale{color:#fff; font-weight:900; font-size:60vh; line-height:1; z-index:6;
+    text-shadow:0 0 20px #000, 0 0 40px #000, 5px 5px 0 #000, -5px -5px 0 #000, 5px -5px 0 #000, -5px 5px 0 #000;}
+
   /* ===== 右側欄（不會被彈幕打到）===== */
   /* 側欄內容全部靠上堆疊：QR → 標題 → 計數，後排觀眾視線不會被前排人頭擋住 */
   #sidebar{position:absolute; top:0; right:0; bottom:0; width:var(--side); z-index:10;
@@ -54,9 +62,11 @@
     display:none; align-items:center; gap:1vh; color:#FFD166; background:rgba(0,0,0,.7);
     border:2px solid #FFD166; border-radius:10px; padding:1.4vh 2vw; font-size:2.2vh; font-weight:800;}
 
-  #fsBtn,#cogBtn{position:fixed; bottom:12px; z-index:50; background:#111; color:#777;
+  /* 右下熱區：終了 → 控制台 → 全螢幕，由左至右 */
+  #hotbar{position:fixed; right:14px; bottom:12px; z-index:50; display:flex; gap:8px;}
+  #hotbar button{background:#111; color:#777;
     border:1px solid #333; border-radius:8px; padding:8px 12px; font-size:13px; cursor:pointer;}
-  #fsBtn{right:14px;} #cogBtn{right:120px;}
+  #hotbar #endBtn.ended{background:#3a2a00; color:#FFD166; border-color:#8a6a10;}
   #stat{position:fixed; left:12px; bottom:10px; color:#444; font-size:12px; font-family:monospace; z-index:50;}
 
   #panel{position:fixed; right:14px; bottom:50px; width:344px; max-height:82vh; overflow:auto; z-index:60;
@@ -100,8 +110,11 @@
     <div id="dbWarn">⚠ 尚未設定 Firebase，請完成 firebase-config.js 後重新整理</div>
   </div>
 
-  <button id="cogBtn">⚙ 控制台 (C)</button>
-  <button id="fsBtn">⛶ 全螢幕 (F)</button>
+  <div id="hotbar">
+    <button id="endBtn">終了 (E)</button>
+    <button id="cogBtn">⚙ 控制台 (C)</button>
+    <button id="fsBtn">⛶ 全螢幕 (F)</button>
+  </div>
   <div id="stat"></div>
 
   <div id="panel">
@@ -117,6 +130,8 @@
       <div><label>滴放ms</label><input id="f_drip" type="number"></div>
       <div><label>補位ms</label><input id="f_fill" type="number"></div>
     </div>
+    <label>後台彈幕速度（px/秒，越小越慢；台詞在 backstage-lines.js）</label>
+    <input id="f_bs" type="number" placeholder="80">
     <label>情境快切（按 1 / 2 / 3）</label>
     <div class="scenes">
       <button data-scene="calm">平靜</button>
@@ -130,12 +145,13 @@
     <div class="acts">
       <button id="clearAllBtn">⚠ 清空大螢幕</button>
     </div>
-    <div class="keys">F 全螢幕 · C 控制台 · 空白鍵 暫停 · X 清空全幕 · 1/2/3 情境</div>
+    <div class="keys">F 全螢幕 · C 控制台 · E 終了/繼續 · 空白鍵 暫停 · X 清空全幕 · 1/2/3 情境</div>
   </div>
 
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
   <script src="firebase-config.js"></script>
+  <script src="backstage-lines.js"></script>
   <script>
   /* ===== 設定（localStorage 記住）===== */
   const DEFAULTS = {
@@ -143,6 +159,7 @@
     fontGroups:  [3.6, 4.8, 6.5],
     lanes: 12, maxOnScreen: 60, dripMs: 70, laneGap: 1.0,
     fillMs: 1200,   // 沒新投稿時的補位間隔（重播既有投稿）
+    backstageSpeed: 80,   // 後台彈幕速度（px/秒）；終了彈幕以其 3 倍速跑一次
   };
   const SCENES = {
     calm:   { maxOnScreen: 25,  dripMs: 160 },
@@ -162,17 +179,30 @@
   /* ===== 彈幕引擎（沿用 QQQQAAAA 實戰驗證版，原樣不動）===== */
   const stage = document.getElementById('stage');
   const queue = [];
-  let onScreen = 0, paused = false;
+  let onScreen = 0, paused = false;   // paused：空白鍵暫停
+  let ended = false;                   // ended：終了狀態（與 paused 獨立，互不覆寫）
+  let bsEnabled = false;               // 後台台詞是否已載入（未載入就不挖保留帶）
+  const frozen = () => paused || ended;   // 三個 loop 是否停止放新彈幕的唯一判準
   let laneBusyUntil = new Array(cfg.lanes).fill(0);
 
   function laneCenter(i){
     const top = 0.05, bottom = 0.95, h = (bottom - top) / cfg.lanes;
     return (top + (i + 0.5) * h) * stage.clientHeight;
   }
+  // 中央保留帶：兩條軌道專給後台彈幕（字級 10vh 跨兩軌），觀眾彈幕不進來。
+  // 軌道數少於 4 時不保留（否則觀眾彈幕沒地方放），後台彈幕直接疊在中央。
+  function reservedLanes(){
+    if(!bsEnabled || cfg.lanes < 4) return [];   // lanes<4 為極端手動設定：不保留，後台彈幕直接疊在中央
+    const m = Math.floor(cfg.lanes / 2);
+    return [m - 1, m];
+  }
   // 隨機挑一條「現在是空的」軌道；全忙就回 -1，這條先排隊、不硬塞 → 保證不重疊
   function pickLane(now){
-    const free = [];
-    for(let i = 0; i < cfg.lanes; i++) if(laneBusyUntil[i] <= now) free.push(i);
+    const free = [], reserved = reservedLanes();
+    for(let i = 0; i < cfg.lanes; i++){
+      if(reserved.indexOf(i) !== -1) continue;
+      if(laneBusyUntil[i] <= now) free.push(i);
+    }
     if(free.length) return free[Math.floor(Math.random() * free.length)];
     return -1;
   }
@@ -222,7 +252,7 @@
     return true;
   }
   (function dripLoop(){
-    if(!paused){
+    if(!frozen()){
       let budget = 4;
       while(budget-- && queue.length && onScreen < cfg.maxOnScreen){
         if(spawn(queue[0])) queue.shift();
@@ -232,8 +262,87 @@
     setTimeout(dripLoop, cfg.dripMs);
   })();
 
+  /* ===== 特殊彈幕（後台台詞／終了）：不走軌道、不計 onScreen、不受清空影響 ===== */
+  // yCenter：元素垂直中心（px）；speed：px/秒；onEnd：飄出畫面後回呼
+  function spawnSpecial(html, cls, speed, yCenter, onEnd){
+    const el = document.createElement('div');
+    el.className = 'danmaku ' + cls;
+    el.innerHTML = html;
+    el.style.visibility = 'hidden';
+    stage.appendChild(el);
+    const w = el.offsetWidth, h = el.offsetHeight;
+    let y = yCenter - h / 2;
+    y = Math.max(0, Math.min(stage.clientHeight - h, y));
+    el.style.top = y + 'px';
+    el.style.visibility = 'visible';
+    const v = Number(speed) > 0 ? Number(speed) : 80;
+    const dist = stage.clientWidth + w, dur = dist / v * 1000;
+    el.style.transition = `transform ${dur}ms linear`;
+    requestAnimationFrame(() => { el.style.transform = `translateX(${-dist}px)`; });
+    let finished = false;
+    const finish = () => { if(finished) return; finished = true; el.remove(); if(onEnd) onEnd(); };
+    el.addEventListener('transitionend', finish);
+    setTimeout(finish, dur + 2000);   // 保底：transitionend 沒觸發（分頁隱藏等）也不會卡死
+    return el;
+  }
+
+  /* ── 後台彈幕輪播：一次一則、柏文／傑哥交替、播完從頭；paused 時不放、保留索引 ── */
+  const bsLines = (typeof BACKSTAGE_LINES !== 'undefined' && Array.isArray(BACKSTAGE_LINES)) ? BACKSTAGE_LINES : null;
+  // 依 who 分組（保留首次出現順序）後交替取用 → P1, J1, P2, J2, …
+  const bsPlaylist = (function(){
+    if(!bsLines) return [];
+    const groups = [], byWho = new Map();
+    bsLines.forEach(l => {
+      if(!l || !l.text) return;
+      if(!byWho.has(l.who)){ byWho.set(l.who, []); groups.push(byWho.get(l.who)); }
+      byWho.get(l.who).push(l);
+    });
+    const out = [], longest = Math.max.apply(null, groups.map(g => g.length).concat(0));
+    for(let i = 0; i < longest; i++) groups.forEach(g => { if(g[i]) out.push(g[i]); });
+    return out;
+  })();
+  bsEnabled = bsPlaylist.length > 0;
+  let bsStarted = false, bsIndex = 0, bsActive = null;
+  function backstageCenterY(){
+    const r = reservedLanes();
+    if(r.length) return (laneCenter(r[0]) + laneCenter(r[1])) / 2;
+    return stage.clientHeight / 2;
+  }
+  function bsNext(){
+    if(!bsStarted || frozen() || bsActive || !bsPlaylist.length) return;
+    const line = bsPlaylist[bsIndex % bsPlaylist.length];
+    bsIndex = (bsIndex + 1) % bsPlaylist.length;
+    const html = `<span class="pfx">${esc(line.who)}｜</span><span class="q">${esc(line.text)}</span>`;
+    bsActive = spawnSpecial(html, 'backstage', Number(cfg.backstageSpeed) || 80, backstageCenterY(),
+                            () => { bsActive = null; bsNext(); });
+  }
+  (function bsLoop(){
+    if(bsActive && !bsActive.isConnected) bsActive = null;   // 元素被外力移除時自我修復
+    bsNext();
+    setTimeout(bsLoop, 500);
+  })();
+
+  /* ── 終了 toggle：放一則滿版「終了～～～」跑一次 ＋ 暫停所有新彈幕；再按恢復 ── */
+  function renderEndBtn(){
+    const b = document.getElementById('endBtn');
+    b.textContent = ended ? '▶ 繼續 (E)' : '終了 (E)';
+    b.classList.toggle('ended', ended);
+  }
+  let lastEndToggle = 0;
+  function toggleEnd(){
+    const now = Date.now();
+    if(now - lastEndToggle < 600) return;   // 防連點
+    lastEndToggle = now;
+    ended = !ended;   // 只切自己的旗標；空白鍵的 paused 不受影響，兩者以 frozen() 合成
+    if(ended){
+      spawnSpecial('終了～～～', 'finale', (Number(cfg.backstageSpeed) || 80) * 3, stage.clientHeight / 2, null);
+    }
+    renderEndBtn();
+  }
+
   function clearScreen(){
-    stage.querySelectorAll('.danmaku').forEach(el => el.remove());
+    // 只清觀眾彈幕；後台台詞與終了彈幕不受清空影響
+    stage.querySelectorAll('.danmaku:not(.backstage):not(.finale)').forEach(el => el.remove());
     queue.length = 0; onScreen = 0; subMap.forEach(m => m.el = null);
   }
 
@@ -264,6 +373,7 @@
     let initialLoaded = false;
     subsRef.once('value').then(() => { initialLoaded = true; })
                          .catch(() => { initialLoaded = true; });
+    setTimeout(() => { bsStarted = true; }, 5000);   // 後台彈幕：連上資料庫 5 秒後開始
 
     subsRef.on('child_added', snap => {
       const it = snap.val(); if(!it) return;
@@ -307,7 +417,7 @@
       return null;   // 池子空或全部在幕上，這輪不補
     }
     (function fillLoop(){
-      if(!paused && initialLoaded && queue.length === 0 && onScreen < cfg.maxOnScreen){
+      if(!frozen() && initialLoaded && queue.length === 0 && onScreen < cfg.maxOnScreen){
         const it = nextRecycled();
         if(it) spawn(it);
       }
@@ -350,6 +460,7 @@
     $('f_lanes').value = cfg.lanes; $('f_max').value = cfg.maxOnScreen;
     $('f_drip').value = cfg.dripMs;
     $('f_fill').value = cfg.fillMs;
+    $('f_bs').value = cfg.backstageSpeed;
   }
   function readForm(){
     cfg.speedGroups = parseNums($('f_speed').value);
@@ -359,6 +470,8 @@
     cfg.maxOnScreen = parseInt($('f_max').value) || cfg.maxOnScreen;
     cfg.dripMs = parseInt($('f_drip').value) || cfg.dripMs;
     cfg.fillMs = parseInt($('f_fill').value) || cfg.fillMs;
+    const bsv = parseInt($('f_bs').value);
+    cfg.backstageSpeed = (bsv > 0) ? bsv : DEFAULTS.backstageSpeed;   // 非數字、0、負數一律退回預設
     localStorage.setItem(LS, JSON.stringify(cfg));
   }
   function setScene(name){
@@ -369,6 +482,8 @@
   }
   function togglePanel(){ panel.classList.toggle('open'); if(panel.classList.contains('open')) fillForm(); }
   $('cogBtn').onclick = togglePanel;
+  $('endBtn').onclick = toggleEnd;
+  renderEndBtn();
   $('saveBtn').onclick = () => { readForm(); panel.classList.remove('open'); };
   $('clearAllBtn').onclick = () => clearAllQuestions();
   $('resetBtn').onclick = () => { cfg = {...DEFAULTS}; laneBusyUntil = new Array(cfg.lanes).fill(0); localStorage.setItem(LS, JSON.stringify(cfg)); fillForm(); };
@@ -402,6 +517,7 @@
     const k = e.key.toLowerCase();
     if(k === 'f') toggleFs();
     else if(k === 'c') togglePanel();
+    else if(k === 'e') toggleEnd();
     else if(k === 'x') clearScreen();
     else if(e.key === '0'){ yOffVh = 0; applyYOff(); }
     else if(e.key === ' '){ e.preventDefault(); paused = !paused; }
@@ -411,7 +527,8 @@
   });
 
   setInterval(() => { $('stat').textContent =
-    `目前彈幕數 ${items.size}` + (paused ? ' · ⏸' : ''); }, 300);
+    `目前彈幕數 ${items.size}` + (paused ? ' · ⏸' : '') + (ended ? ' · 終了' : '') +
+    (bsLines ? ` · 後台 ${bsPlaylist.length} 則` : ' · ⚠ 後台台詞未載入'); }, 300);
   </script>
 </body>
 </html>
