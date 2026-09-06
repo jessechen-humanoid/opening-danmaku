@@ -27,6 +27,7 @@
   .danmaku.backstage{color:#fff; font-weight:900; line-height:1.1; z-index:5;   /* 字級由 fitBackstageFont() 依最長句計算，保證單行；line-height 收緊讓文字盒落在保留帶內 */
     text-shadow:0 0 8px #000, 0 0 16px #000, 3px 3px 0 #000, -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000;}
   .danmaku.backstage .pfx{opacity:.85;}   /* 前綴同為白色、略壓一階 */
+  .danmaku.backstage .bl{display:block; text-align:center; white-space:nowrap;}   /* 平衡斷行後的每一行 */
   /* 終了彈幕：滿版單則 */
   .danmaku.finale{color:#fff; font-weight:900; font-size:60vh; line-height:1; z-index:6;
     text-shadow:0 0 20px #000, 0 0 40px #000, 5px 5px 0 #000, -5px -5px 0 #000, 5px -5px 0 #000, -5px 5px 0 #000;}
@@ -156,11 +157,12 @@
   /* ===== 設定（localStorage 記住）===== */
   const DEFAULTS = {
     speedGroups: [120, 170, 230],
-    fontGroups:  [3.6, 4.8, 6.5],
+    fontGroups:  [3.4, 4.5, 6.0],   // 觀眾字級；spawn 時再鉗制在後台字級 90% 內
     lanes: 12, maxOnScreen: 60, dripMs: 70, laneGap: 1.0,
     fillMs: 1200,   // 沒新投稿時的補位間隔（重播既有投稿）
     backstageHoldSec: 10,   // 後台字卡停在中央的秒數
   };
+  const BS_FONT_VH = 7.5;   // 後台字卡字級（vh）＝全場最大；觀眾字級鉗制在其 90% 內
   const SCENES = {
     calm:   { maxOnScreen: 25,  dripMs: 160 },
     normal: { maxOnScreen: 60,  dripMs: 70  },
@@ -189,12 +191,12 @@
     const top = 0.05, bottom = 0.95, h = (bottom - top) / cfg.lanes;
     return (top + (i + 0.5) * h) * stage.clientHeight;
   }
-  // 中央保留帶：兩條軌道專給後台彈幕（字級 10vh 跨兩軌），觀眾彈幕不進來。
-  // 軌道數少於 4 時不保留（否則觀眾彈幕沒地方放），後台彈幕直接疊在中央。
+  // 中央保留帶：三條軌道專給後台字卡（7.5vh 兩行約 17vh），觀眾彈幕不進來。
+  // 軌道數少於 5 時不保留（否則觀眾彈幕沒地方放），後台字卡直接疊在中央。
   function reservedLanes(){
-    if(!bsEnabled || cfg.lanes < 4) return [];   // lanes<4 為極端手動設定：不保留，後台彈幕直接疊在中央
+    if(!bsEnabled || cfg.lanes < 5) return [];
     const m = Math.floor(cfg.lanes / 2);
-    return [m - 1, m];
+    return [m - 1, m, m + 1];
   }
   // 隨機挑一條「現在是空的」軌道；全忙就回 -1，這條先排隊、不硬塞 → 保證不重疊
   function pickLane(now){
@@ -218,7 +220,7 @@
 
     const el = document.createElement('div');
     el.className = 'danmaku';
-    el.style.fontSize = pick(cfg.fontGroups) + 'vh';
+    el.style.fontSize = Math.min(pick(cfg.fontGroups) || 4.5, BS_FONT_VH * 0.9) + 'vh';   // 觀眾字級永遠 ≤ 後台字級 90%
     el.style.color = pickTextColor();
     el.innerHTML = sentence(it);
     el.style.visibility = 'hidden';
@@ -306,27 +308,41 @@
   addEventListener('load', () => { if(typeof fitBackstageFont === 'function') fitBackstageFont(); });
   function backstageCenterY(){
     const r = reservedLanes();
-    if(r.length) return (laneCenter(r[0]) + laneCenter(r[1])) / 2;
+    if(r.length) return (laneCenter(r[0]) + laneCenter(r[r.length - 1])) / 2;
     return stage.clientHeight / 2;
   }
   const FINALE_SPEED = 240;   // 終了彈幕固定速度（px/秒），不受控制台影響
 
-  // 字級依最長句自動縮放：min(6vh, 舞台寬×0.92 ÷ 最長句字數)。以字數估寬（CJK 一字 ≈ 1em），
-  // 全中文台詞誤差小；保證 12 句全部單行、不留空位。載入與 resize 時重算。
+  // 後台字級固定 7.5vh＝全場最大（觀眾字級在 spawn 時鉗制在其 90% 內）。太長的句子改為平衡斷成兩行。
   let bsFontPx = 0;
   function fitBackstageFont(){
-    if(!bsPlaylist.length) return;
-    // 半形字元（英數、空白、標點）約半個字寬，算 0.5；其餘（CJK、全形）算 1
-    const widthOf = str => [...str].reduce((n, ch) => n + (/[\x20-\x7E]/.test(ch) ? 0.5 : 1), 0);
-    const maxChars = Math.max.apply(null, bsPlaylist.map(l => widthOf(l.who + '｜' + l.text)));
-    const cap = stage.clientHeight * 0.06;
-    bsFontPx = Math.max(12, Math.min(cap, stage.clientWidth * 0.92 / maxChars));
+    bsFontPx = Math.max(12, stage.clientHeight * BS_FONT_VH / 100);
     if(bsActive){
       bsActive.style.fontSize = bsFontPx + 'px';
       if(bsActive._bs) bsActive._bs.recalc();   // 字卡顯示中 resize／進全螢幕：重算置中與離場位移
     }
   }
   addEventListener('resize', fitBackstageFont);
+
+  /* BALANCED_SPLIT_BEGIN */
+  // 平衡斷行：在「，。！？、…－｜」與半形空白之後的位置中，取最接近全文字數中點者為斷點；
+  // 最近候選距中點超過全文長度 10%（較短行不足四成）或無候選 → 在中點字數處硬切。
+  // 前綴永遠留在第一行（斷點不小於前綴長度＋1）。回傳 [第一行字元數]（以 code point 計）。
+  function balancedSplitPos(fullText, prefixLen){
+    const chars = [...fullText], len = chars.length, mid = len / 2;
+    const BREAK_AFTER = new Set([...'，。！？、…－｜ .!?']);
+    let best = -1, bestDist = Infinity;
+    for(let i = 0; i < len - 1; i++){
+      const pos = i + 1;   // 在第 i 個字之後斷
+      if(!BREAK_AFTER.has(chars[i])) continue;
+      if(pos <= prefixLen) continue;   // 第一行不能只剩前綴
+      const d = Math.abs(pos - mid);
+      if(d < bestDist){ best = pos; bestDist = d; }
+    }
+    if(best > 0 && bestDist <= len * 0.1) return best;
+    return Math.max(prefixLen + 1, Math.floor(mid));
+  }
+  /* BALANCED_SPLIT_END */
 
   // 三段式字卡：右緣進場 0.6s 急停中央 → 停留 backstageHoldSec 秒 → 0.5s 滑出左緣 → 下一句立刻進場。
   // paused：停留計時凍結、字卡留在中央；ended：立即進入離場段。
@@ -336,10 +352,29 @@
     const el = document.createElement('div');
     el.className = 'danmaku backstage';
     el.style.fontSize = bsFontPx + 'px';
-    el.innerHTML = `<span class="pfx">${esc(line.who)}｜</span><span class="q">${esc(line.text)}</span>`;
     el.style.visibility = 'hidden';
     stage.appendChild(el);
-    const w = el.offsetWidth, h = el.offsetHeight, stageW = stage.clientWidth;
+    const stageW = stage.clientWidth, limitW = stageW * 0.92;
+    const prefix = line.who + '｜', full = prefix + line.text, prefixLen = [...prefix].length;
+    const oneLine = `<span class="pfx">${esc(prefix)}</span><span class="q">${esc(line.text)}</span>`;
+    const twoLines = pos => {
+      const chars = [...full];
+      pos = Math.min(pos, chars.length - 1);   // 第二行至少一個字，不留空行
+      const l1 = chars.slice(prefixLen, pos).join(''), l2 = chars.slice(pos).join('');
+      return `<span class="bl"><span class="pfx">${esc(prefix)}</span><span class="q">${esc(l1)}</span></span>` +
+             `<span class="bl"><span class="q">${esc(l2)}</span></span>`;
+    };
+    // 版面判斷：單行放得下就單行；否則平衡兩行；仍超寬則中點硬切。建卡與 resize 時都重跑。
+    const layout = () => {
+      const lim = stage.clientWidth * 0.92;
+      el.innerHTML = oneLine;
+      if(el.offsetWidth > lim && [...full].length > prefixLen + 1){
+        el.innerHTML = twoLines(balancedSplitPos(full, prefixLen));
+        if(el.offsetWidth > lim) el.innerHTML = twoLines(Math.max(prefixLen + 1, Math.floor([...full].length / 2)));
+      }
+    };
+    layout();
+    const w = el.offsetWidth, h = el.offsetHeight;
     let y = backstageCenterY() - h / 2;
     y = Math.max(0, Math.min(stage.clientHeight - h, y));
     el.style.top = y + 'px';
@@ -349,6 +384,7 @@
     let phase = 'enter', done = false;
     // resize 重算幾何：hold 中的卡直接跳到新的置中位置（無動畫）；enter/exit 中只更新目標值
     el._bs = { recalc(){
+      layout();   // 視窗尺寸變了：重新判斷單行／兩行與斷點
       const w2 = el.offsetWidth, h2 = el.offsetHeight, sw = stage.clientWidth;
       centerX = -(sw / 2 + w2 / 2); exitX = -(sw + w2);
       let y2 = backstageCenterY() - h2 / 2; y2 = Math.max(0, Math.min(stage.clientHeight - h2, y2));
