@@ -21,12 +21,12 @@
 
   .danmaku{position:absolute; left:100%; white-space:nowrap; font-weight:800;
     text-shadow:0 2px 10px #000, 0 0 4px #000, 0 0 2px #000; will-change:transform;}
-  .danmaku .pfx{opacity:.55;}   /* {table} {nick}｜ 前綴壓深，內容本文全亮 */
+  .danmaku .pfx{color:#9a9a9a;}   /* 觀眾彈幕：桌號暱稱前綴灰、本文白 */
 
   /* 後台彈幕（預寫台詞）：純白、最大字級、黑描邊，固定走中央保留帶，一次只有一則 */
-  .danmaku.backstage{color:#fff; font-weight:900; line-height:1.1; z-index:5;   /* 字級由 fitBackstageFont() 依最長句計算，保證單行；line-height 收緊讓文字盒落在保留帶內 */
+  .danmaku.backstage{color:#FFD166; font-weight:900; line-height:1.1; z-index:5;   /* 字級由 fitBackstageFont() 依最長句計算，保證單行；line-height 收緊讓文字盒落在保留帶內 */
     text-shadow:0 0 8px #000, 0 0 16px #000, 3px 3px 0 #000, -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000;}
-  .danmaku.backstage .pfx{opacity:.85;}   /* 前綴同為白色、略壓一階 */
+  .danmaku.backstage .pfx{color:#FFD166; opacity:.85;}   /* 後台字卡整體品牌黃，前綴略壓一階 */
   .danmaku.backstage .bl{display:block; text-align:center; white-space:nowrap;}   /* 平衡斷行後的每一行 */
   /* 終了彈幕：滿版單則 */
   .danmaku.finale{color:#fff; font-weight:900; font-size:60vh; line-height:1; z-index:6;
@@ -175,8 +175,8 @@
   const pick = a => (a && a.length) ? a[Math.floor(Math.random()*a.length)] : null;
   const parseNums = s => String(s).split(/[,\s]+/).map(Number).filter(n=>!isNaN(n)&&n>0);
 
-  /* 彈幕文字色：單一系統，每條隨機 80% 象牙白 / 20% 黃 */
-  function pickTextColor(){ return Math.random() < 0.8 ? '#FFFDF6' : '#FFD166'; }
+  /* 觀眾彈幕本文一律白（黃色保留給後台字卡，讓它是全場唯一的黃）*/
+  function pickTextColor(){ return '#FFFDF6'; }
 
   /* ===== 彈幕引擎（沿用 QQQQAAAA 實戰驗證版，原樣不動）===== */
   const stage = document.getElementById('stage');
