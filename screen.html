@@ -191,12 +191,13 @@
     const top = 0.05, bottom = 0.95, h = (bottom - top) / cfg.lanes;
     return (top + (i + 0.5) * h) * stage.clientHeight;
   }
-  // 中央保留帶：三條軌道專給後台字卡（7.5vh 兩行約 17vh），觀眾彈幕不進來。
-  // 軌道數少於 5 時不保留（否則觀眾彈幕沒地方放），後台字卡直接疊在中央。
+  // 保留帶：畫面中線「上方」三條軌道專給後台字卡（12 軌時為第 3、4、5 軌，帶底邊剛好在 50% 高度），
+  // 字卡置中於帶內 → 兩行字卡的第二行也在中線之上。觀眾彈幕不進來。
+  // 軌道數少於 6 時不保留（否則觀眾彈幕沒地方放），後台字卡直接疊在中線上方。
   function reservedLanes(){
-    if(!bsEnabled || cfg.lanes < 5) return [];
+    if(!bsEnabled || cfg.lanes < 6) return [];
     const m = Math.floor(cfg.lanes / 2);
-    return [m - 1, m, m + 1];
+    return [m - 3, m - 2, m - 1];
   }
   // 隨機挑一條「現在是空的」軌道；全忙就回 -1，這條先排隊、不硬塞 → 保證不重疊
   function pickLane(now){
@@ -309,7 +310,7 @@
   function backstageCenterY(){
     const r = reservedLanes();
     if(r.length) return (laneCenter(r[0]) + laneCenter(r[r.length - 1])) / 2;
-    return stage.clientHeight / 2;
+    return stage.clientHeight * 0.39;   // 不保留時也放在中線上方
   }
   const FINALE_SPEED = 240;   // 終了彈幕固定速度（px/秒），不受控制台影響
 
